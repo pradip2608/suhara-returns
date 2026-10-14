@@ -1,0 +1,13 @@
+# Dev override: bind-mount source for hot reload.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  api:
+    build:
+      context: .
+      target: deps          # stage that has node_modules
+    command: ["node", "--watch", "src/server.js"]
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./src:/app/src      # bind mount: edit on host, restart in container
+      - uploads:/app/uploads

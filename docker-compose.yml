@@ -1,0 +1,72 @@
+# Production-like local stack: api + mongo + mongo-express.
+#   cp .env.example .env && docker compose up -d --build
+#   docker compose run --rm seed      # first time only
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongo-data:/data/db # named volume: survives `docker compose down`
+    healthcheck:
+      test:
+        ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+  api:
+    build: .
+    image: ${DOCKERHUB_USER:-local}/suhara-returns:dev
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      MONGO_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/suhara?authSource=admin
+      JWT_SECRET: ${JWT_SECRET}
+      SHOPIFY_WEBHOOK_SECRET: ${SHOPIFY_WEBHOOK_SECRET}
+      RETURN_WINDOW_DAYS: ${RETURN_WINDOW_DAYS:-7}
+    volumes:
+      - uploads:/app/uploads # named volume: return photos persist
+    ports:
+      - "3000:3000"
+    networks: [backend]
+
+  # One-off: syncs indexes + creates the admin. `docker compose run --rm seed`
+  seed:
+    image: ${DOCKERHUB_USER:-local}/suhara-returns:dev
+    profiles: ["tools"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: ["node", "src/scripts/seed.js"]
+    environment:
+      MONGO_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/suhara?authSource=admin
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SEED_DEMO_ORDER: "true"
+    networks: [backend]
+
+  mongo-express:
+    image: mongo-express:1
+    profiles: ["tools"]
+    depends_on: [mongo]
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/?authSource=admin
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "8081:8081"
+    networks: [backend]
+
+volumes:
+  mongo-data:
+  uploads:
+
+networks:
+  backend:

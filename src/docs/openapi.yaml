@@ -1,0 +1,221 @@
+openapi: 3.0.3
+info:
+  title: SUHARA Returns Desk API
+  version: 1.0.0
+  description: Returns and exchange requests for suharawears.com orders.
+servers:
+  - url: /
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        details: { type: object }
+    Return:
+      type: object
+      properties:
+        _id: { type: string }
+        orderNumber: { type: string }
+        lineItemId: { type: string }
+        sku: { type: string }
+        size: { type: string }
+        type: { type: string, enum: [return, exchange] }
+        reason:
+          {
+            type: string,
+            enum:
+              [
+                size_too_small,
+                size_too_large,
+                color_mismatch,
+                damaged,
+                not_as_described,
+                other,
+              ],
+          }
+        exchangeSize: { type: string }
+        photos: { type: array, items: { type: string } }
+        status:
+          {
+            type: string,
+            enum:
+              [
+                requested,
+                approved,
+                rejected,
+                picked_up,
+                received,
+                refunded,
+                exchanged,
+              ],
+          }
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              from: { type: string }
+              to: { type: string }
+              note: { type: string }
+              by: { type: string }
+              at: { type: string, format: date-time }
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses: { "200": { description: Process is alive } }
+  /readyz:
+    get:
+      summary: Readiness probe (checks MongoDB)
+      responses:
+        "200": { description: Ready }
+        "503": { description: MongoDB unavailable }
+  /api/v1/auth/login:
+    post:
+      summary: Staff login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200": { description: JWT issued }
+        "401": { description: Invalid credentials }
+  /api/v1/auth/users:
+    post:
+      summary: Create a staff user (admin only)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string, minLength: 8 }
+                role: { type: string, enum: [admin, ops] }
+      responses:
+        "201": { description: Created }
+        "403": { description: Not an admin }
+  /api/v1/webhooks/shopify/orders:
+    post:
+      summary: Shopify orders/create webhook (HMAC verified)
+      parameters:
+        - in: header
+          name: X-Shopify-Hmac-Sha256
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Order stored }
+        "401": { description: Bad signature }
+  /api/v1/orders/{orderNumber}:
+    get:
+      summary: Look up an order (customer-facing)
+      parameters:
+        - {
+            in: path,
+            name: orderNumber,
+            required: true,
+            schema: { type: string },
+          }
+        - { in: query, name: email, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Order }
+        "404": { description: Not found }
+  /api/v1/returns:
+    post:
+      summary: File a return or exchange (customer-facing)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [orderNumber, email, lineItemId, type, reason]
+              properties:
+                orderNumber: { type: string }
+                email: { type: string }
+                lineItemId: { type: string }
+                type: { type: string, enum: [return, exchange] }
+                reason: { type: string }
+                comment: { type: string }
+                exchangeSize: { type: string }
+                photos:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        "201":
+          description: Created
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/Return" } },
+            }
+        "400": { description: Validation error }
+        "409": { description: Return already exists }
+        "422": { description: Outside return window }
+    get:
+      summary: List returns (staff)
+      security: [{ bearer: [] }]
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: sku, schema: { type: string } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - {
+            in: query,
+            name: limit,
+            schema: { type: integer, default: 20, maximum: 100 },
+          }
+      responses:
+        "200": { description: Paginated list }
+  /api/v1/returns/{id}:
+    get:
+      summary: Get a return (staff)
+      security: [{ bearer: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Return with order }
+        "404": { description: Not found }
+  /api/v1/returns/{id}/status:
+    patch:
+      summary: Move a return through its lifecycle (staff)
+      security: [{ bearer: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+                note: { type: string }
+                exchangeSize: { type: string }
+      responses:
+        "200": { description: Updated }
+        "409": { description: Illegal transition }
+  /api/v1/analytics/returns-by-sku:
+    get:
+      summary: Most-returned SKU and size combinations, with reasons
+      security: [{ bearer: [] }]
+      parameters:
+        - { in: query, name: days, schema: { type: integer, default: 90 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20 } }
+      responses:
+        "200": { description: Aggregated rows }
