@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: suhara-returns-config
+  namespace: suhara
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  UPLOAD_DIR: "/app/uploads"
+  RETURN_WINDOW_DAYS: "7"
+  MAX_PHOTO_MB: "5"

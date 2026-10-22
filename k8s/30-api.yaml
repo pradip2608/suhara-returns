@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: suhara-returns
+  namespace: suhara
+  labels: { app: suhara-returns }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } # zero-downtime deploys
+  selector:
+    matchLabels: { app: suhara-returns }
+  template:
+    metadata:
+      labels: { app: suhara-returns }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # the "node" user in node:alpine
+        fsGroup: 1000 # makes the mounted PVC writable by that user
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: api
+          # CI replaces this tag with the git SHA it just pushed.
+          image: pradip2608/suhara-returns:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - configMapRef: { name: suhara-returns-config }
+          env:
+            - name: MONGO_URI
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: MONGO_URI },
+                }
+            - name: JWT_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: JWT_SECRET },
+                }
+            - name: SHOPIFY_WEBHOOK_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    {
+                      name: suhara-returns-secrets,
+                      key: SHOPIFY_WEBHOOK_SECRET,
+                    },
+                }
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+          # Ready = can reach Mongo. Not ready -> removed from Service, not restarted.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # Alive = process responds. Fails -> container restarted.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          lifecycle:
+            preStop:
+              # Give the Service/Ingress time to stop routing here before SIGTERM.
+              exec: { command: ["sleep", "5"] }
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: suhara-uploads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: suhara-returns
+  namespace: suhara
+spec:
+  type: ClusterIP
+  selector: { app: suhara-returns }
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

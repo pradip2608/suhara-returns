@@ -1,0 +1,78 @@
+# Headless Service: gives the StatefulSet pod a stable DNS name
+# (mongo-0.mongo.suhara.svc.cluster.local) instead of a load-balanced VIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: suhara
+  labels: { app: mongo }
+spec:
+  clusterIP: None
+  selector: { app: mongo }
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: suhara
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels: { app: mongo }
+  template:
+    metadata:
+      labels: { app: mongo }
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: mongo
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+              name: mongo
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: MONGO_ROOT_USER },
+                }
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: MONGO_ROOT_PASSWORD },
+                }
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 1Gi }
+          readinessProbe:
+            exec:
+              command:
+                ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+  # One PersistentVolumeClaim per pod, created automatically and kept
+  # even if the StatefulSet is deleted — this is where your data lives.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

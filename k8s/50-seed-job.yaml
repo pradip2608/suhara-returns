@@ -1,0 +1,49 @@
+# One-off bootstrap: sync indexes + create the first admin. Idempotent.
+#   kubectl apply -f k8s/50-seed-job.yaml
+#   kubectl -n suhara logs job/suhara-seed
+# Re-run: kubectl -n suhara delete job suhara-seed && kubectl apply -f k8s/50-seed-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: suhara-seed
+  namespace: suhara
+spec:
+  backoffLimit: 4 # retries while Mongo is still starting
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: seed
+          image: pradip2608/suhara-returns:latest
+          command: ["node", "src/scripts/seed.js"]
+          env:
+            - name: MONGO_URI
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: MONGO_URI },
+                }
+            - name: JWT_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: JWT_SECRET },
+                }
+            - name: ADMIN_EMAIL
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: ADMIN_EMAIL },
+                }
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: suhara-returns-secrets, key: ADMIN_PASSWORD },
+                }
+            - name: SEED_DEMO_ORDER
+              value: "true"

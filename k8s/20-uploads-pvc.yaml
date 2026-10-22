@@ -1,0 +1,15 @@
+# Return photos. ReadWriteOnce = one NODE can mount it.
+# On a single-node cluster (kind/minikube) both API replicas share it fine.
+# On a multi-node cluster the second replica gets stuck Pending/ContainerCreating
+# once it schedules elsewhere — that's the cue to move photos to Azure Blob
+# Storage (see README "The deliberate wall").
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: suhara-uploads
+  namespace: suhara
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
